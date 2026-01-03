@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  # FalkorDB - Graph Database
+  falkordb:
+    image: falkordb/falkordb-server:4.2.3  # Production image (Browser yok)
+    container_name: falkordb
+    environment:
+      # FalkorDB Configuration
+      - FALKORDB_PASSWORD=${FALKORDB_PASSWORD}
+      - FALKORDB_ARGS=--appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+      - FALKORDB_THREAD_COUNT=4
+    volumes:
+      # Persistent storage
+      - falkordb_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${FALKORDB_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    # ⚠️ KRİTİK: Port PUBLISH ETMEYİN! Coolify halleder.
+    # ports:
+    #   - "6379:6379"  # ❌ BUNU YAPMAYIN!
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Graphiti API - Python FastAPI Wrapper
+  graphiti-api:
+    build:
+      context: ./graphiti-api
+      dockerfile: Dockerfile
+    container_name: graphiti-api
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    environment:
+      # Required Variables (${VAR:?} = required)
+      - FALKORDB_HOST=falkordb
+      - FALKORDB_PORT=6379
+      - FALKORDB_PASSWORD=${FALKORDB_PASSWORD:?}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?}
+
+      # Graphiti Configuration
+      - GRAPHITI_LLM_PROVIDER=${GRAPHITI_LLM_PROVIDER:-openai}
+      - GRAPHITI_LLM_MODEL=${GRAPHITI_LLM_MODEL:-gpt-4o}
+      - GRAPHITI_EMBEDDER_PROVIDER=${GRAPHITI_EMBEDDER_PROVIDER:-openai}
+      - GRAPHITI_EMBEDDER_MODEL=${GRAPHITI_EMBEDDER_MODEL:-text-embedding-3-small}
+
+      # Performance Tuning
+      - SEMAPHORE_LIMIT=${SEMAPHORE_LIMIT:-10}  # Concurrent operations
+      - WORKER_COUNT=${WORKER_COUNT:-4}
+
+      # Turkwise Configuration
+      - TENANT_PREFIX=turkwise_
+      - API_KEY_HEADER=X-API-KEY
+      - TURKWISE_API_KEY=${TURKWISE_API_KEY:?}
+
+      # Monitoring
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_OTEL=${ENABLE_OTEL:-true}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    # ⚠️ KRİTİK: Port PUBLISH ETMEYİN!
+    # Coolify UI'dan domain assign edeceksiniz
+    labels:
+      - "coolify.managed=true"
+      - "coolify.service=graphiti-api"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  falkordb_data:
+    driver: local
+    # Coolify-specific options
+    labels:
+      - "coolify.volume=falkordb-data"
+      - "coolify.backup=true"
+
+networks:
+  default:
+    name: graphiti-network
+    labels:
+      - "coolify.network=true"
