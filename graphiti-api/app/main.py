@@ -181,7 +181,7 @@ async def search_memory(request: SearchRequest):
         results = await graphiti_client.search(
             query=request.query,
             group_ids=[group_id],
-            limit=request.limit,
+            num_results=request.limit,
         )
 
         logger.info(f"Search completed for tenant {request.tenant_id}: {len(results)} results")
