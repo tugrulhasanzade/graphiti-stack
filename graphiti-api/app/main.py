@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader
 from graphiti_core import Graphiti
+from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.nodes import EpisodeType
 from pydantic import BaseModel
 import os
@@ -39,18 +40,21 @@ async def lifespan(app: FastAPI):
     """Application lifespan."""
     global graphiti_client
 
-    # Startup: Initialize Graphiti
+    # Startup: Initialize Graphiti with FalkorDB
     logger.info("Initializing Graphiti client...")
-    graphiti_client = Graphiti(
+
+    # Create FalkorDB driver
+    falkor_driver = FalkorDriver(
         host=FALKORDB_HOST,
-        port=FALKORDB_PORT,
+        port=int(FALKORDB_PORT),
         password=FALKORDB_PASSWORD,
-        llm_provider=os.getenv("GRAPHITI_LLM_PROVIDER", "openai"),
-        llm_model=os.getenv("GRAPHITI_LLM_MODEL", "gpt-4o"),
-        embedder_provider=os.getenv("GRAPHITI_EMBEDDER_PROVIDER", "openai"),
-        embedder_model=os.getenv("GRAPHITI_EMBEDDER_MODEL", "text-embedding-3-small"),
     )
-    await graphiti_client.build_indices()
+
+    # Initialize Graphiti with driver
+    graphiti_client = Graphiti(graph_driver=falkor_driver)
+
+    # Build indices and constraints
+    await graphiti_client.build_indices_and_constraints()
     logger.info("Graphiti client initialized successfully")
 
     yield
