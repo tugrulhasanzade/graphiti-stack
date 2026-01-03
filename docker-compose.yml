@@ -3,13 +3,12 @@ version: '3.8'
 services:
   # FalkorDB - Graph Database
   falkordb:
-    image: falkordb/falkordb-server:4.2.3  # Production image (Browser yok)
+    image: falkordb/falkordb-server:latest  # Production image (Browser yok)
     container_name: falkordb
     environment:
-      # FalkorDB Configuration
-      - FALKORDB_PASSWORD=${FALKORDB_PASSWORD}
-      - FALKORDB_ARGS=--appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
-      - FALKORDB_THREAD_COUNT=4
+      # Redis + FalkorDB Configuration (resmi dokümantasyon)
+      - REDIS_ARGS=--requirepass ${FALKORDB_PASSWORD} --appendonly yes --appendfsync everysec --maxmemory 2gb --maxmemory-policy allkeys-lru
+      - FALKORDB_ARGS=THREAD_COUNT 4 CACHE_SIZE 50 TIMEOUT_MAX 60000 TIMEOUT_DEFAULT 30000
     volumes:
       # Persistent storage
       - falkordb_data:/data
@@ -65,7 +64,7 @@ services:
       - ENABLE_OTEL=${ENABLE_OTEL:-true}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
