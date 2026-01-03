@@ -79,7 +79,7 @@ class EpisodeRequest(BaseModel):
     """Episode creation request."""
     tenant_id: str
     content: str
-    episode_type: str = "conversation"
+    episode_type: str = "message"  # Valid values: "message", "text", "json"
     source_description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
