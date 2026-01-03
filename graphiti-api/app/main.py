@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import os
 from typing import List, Optional, Dict, Any
 import logging
+from datetime import datetime
 
 # Logging setup
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -79,8 +80,9 @@ class EpisodeRequest(BaseModel):
     """Episode creation request."""
     tenant_id: str
     content: str
-    episode_type: str = "message"  # Valid values: "message", "text", "json"
+    source: str = "message"  # Valid values: "message", "text", "json"
     source_description: Optional[str] = None
+    reference_time: Optional[str] = None  # ISO format datetime, defaults to now
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -124,11 +126,21 @@ async def add_episode(request: EpisodeRequest):
     group_id = f"{TENANT_PREFIX}{request.tenant_id}"
 
     try:
+        # Parse reference time or use current time
+        ref_time = datetime.fromisoformat(request.reference_time) if request.reference_time else datetime.now()
+
+        # Convert source string to EpisodeType enum
+        try:
+            source_enum = EpisodeType[request.source.lower()]
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Invalid source type: {request.source}. Valid values: message, text, json")
+
         episodes = await graphiti_client.add_episode(
             name=request.source_description or "Customer Conversation",
             episode_body=request.content,
-            episode_type=EpisodeType(request.episode_type),
-            source_description=request.source_description,
+            source=source_enum,
+            source_description=request.source_description or "",
+            reference_time=ref_time,
             group_id=group_id,
         )
 
@@ -137,10 +149,17 @@ async def add_episode(request: EpisodeRequest):
         return {
             "success": True,
             "group_id": group_id,
-            "episodes_created": len(episodes),
-            "episode_ids": [ep.uuid for ep in episodes],
+            "episode": {
+                "uuid": episodes.episode.uuid,
+                "name": episodes.episode.name,
+                "created_at": episodes.episode.created_at.isoformat() if hasattr(episodes.episode, 'created_at') else None,
+            },
+            "nodes_created": len(episodes.nodes),
+            "edges_created": len(episodes.edges),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add episode: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -201,21 +220,28 @@ async def get_entities(tenant_id: str):
     group_id = f"{TENANT_PREFIX}{tenant_id}"
 
     try:
-        # Query entities from graph
-        entities = await graphiti_client.get_entities(group_id=group_id)
+        # Search for entities using empty query to get all
+        results = await graphiti_client.search(
+            query="",
+            group_ids=[group_id],
+            num_results=1000,  # Large number to get all entities
+        )
+
+        # Extract unique entities from results
+        entities_dict = {}
+        for result in results:
+            if hasattr(result, 'fact') and hasattr(result.fact, 'name'):
+                entities_dict[result.fact.name] = {
+                    "name": result.fact.name,
+                    "uuid": result.fact.uuid,
+                    "summary": result.fact.summary if hasattr(result.fact, 'summary') else None,
+                }
 
         return {
             "success": True,
             "group_id": group_id,
-            "entities_count": len(entities),
-            "entities": [
-                {
-                    "name": e.name,
-                    "type": e.entity_type if hasattr(e, 'entity_type') else None,
-                    "summary": e.summary if hasattr(e, 'summary') else None,
-                }
-                for e in entities
-            ],
+            "entities_count": len(entities_dict),
+            "entities": list(entities_dict.values()),
         }
 
     except Exception as e:
@@ -236,16 +262,32 @@ async def get_tenant_stats(tenant_id: str):
     group_id = f"{TENANT_PREFIX}{tenant_id}"
 
     try:
-        # Get basic stats
-        episodes = await graphiti_client.get_episodes(group_id=group_id)
-        entities = await graphiti_client.get_entities(group_id=group_id)
+        # Get episodes using retrieve_episodes
+        episodes = await graphiti_client.retrieve_episodes(
+            reference_time=datetime.now(),
+            last_n=10000,  # Large number to get all episodes
+            group_ids=[group_id],
+        )
+
+        # Get entities using search
+        entity_results = await graphiti_client.search(
+            query="",
+            group_ids=[group_id],
+            num_results=10000,
+        )
+
+        # Count unique entities
+        unique_entities = set()
+        for result in entity_results:
+            if hasattr(result, 'fact') and hasattr(result.fact, 'uuid'):
+                unique_entities.add(result.fact.uuid)
 
         return {
             "success": True,
             "tenant_id": tenant_id,
             "group_id": group_id,
             "episodes_count": len(episodes),
-            "entities_count": len(entities),
+            "entities_count": len(unique_entities),
         }
 
     except Exception as e:
